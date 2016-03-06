@@ -2,46 +2,59 @@
 
 package main
 
-import "github.com/gin-gonic/gin"
+import (
+	"html/template"
+	"net/http"
+
+	"github.com/rs/xmux"
+
+	"golang.org/x/net/context"
+)
+
+type Funder struct {
+	User
+}
+
+var fundersTmpl *template.Template
 
 // fundersGET lists the funders
-func fundersGET(c *gin.Context) {
-	c.HTML(200, "funders.html", nil)
+func fundersGET(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	fundersTmpl.ExecuteTemplate(w, "funders.html", nil)
 }
 
 // funderGET returns the funder
-func funderGET(c *gin.Context) {
-	funderid := c.Param("funderid")
-	c.HTML(200, "funder.html", gin.H{
+func funderGET(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	funderid := xmux.Param(ctx, "funderid")
+	fundersTmpl.ExecuteTemplate(w, "funder.html", map[string]string{
 		"funderid": funderid,
 	})
 }
 
 // funderPOST creates a new funder
-func funderPOST(c *gin.Context) {
-	funderid := c.PostForm("funder")
-	message := c.PostForm("message")
+func funderPOST(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	funderid := r.PostFormValue("funder")
+	message := r.PostFormValue("message")
 	//funder(funderid).Submit(funderid + ": " + message)
 
-	c.JSON(200, gin.H{
+	writeJSON(ctx, w, map[string]string{
 		"status":  "success",
 		"message": funderid + ": " + message,
 	})
 }
 
 // funderPUT modifies an existing funder
-func funderPUT(c *gin.Context) {
-	funderid := c.PostForm("funder")
-	message := c.PostForm("message")
+func funderPUT(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	funderid := r.PostFormValue("funder")
+	message := r.PostFormValue("message")
 	//funder(funderid).Submit(funderid + ": " + message)
 
-	c.JSON(200, gin.H{
+	writeJSON(ctx, w, map[string]string{
 		"status":  "success",
 		"message": funderid + ": " + message,
 	})
 }
 
 // funderDELETE deletes the funder
-func funderDELETE(c *gin.Context) {
+func funderDELETE(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	//funderid := c.Param("funderid")
 }

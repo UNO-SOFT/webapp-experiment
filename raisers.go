@@ -4,52 +4,79 @@ package main
 
 import (
 	"fmt"
+	"html/template"
 	"math/rand"
+	"net/http"
 
-	"github.com/gin-gonic/gin"
+	"golang.org/x/net/context"
+
+	"github.com/rs/xmux"
+)
+
+type Raiser struct {
+	User
+
+	Want Money
+}
+
+var raisersTmpl *template.Template
+
+type Money struct {
+	Amount   int64
+	Currency Currency
+}
+
+type Currency string
+
+const (
+	USD = Currency("USD")
+	EUR = Currency("EUR")
+	HUF = Currency("HUF")
 )
 
 // raisersGET lists the fundraisers
-func raisersGET(c *gin.Context) {
-	c.HTML(200, "raisers.html", nil)
+func raisersGET(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	raisersTmpl.ExecuteTemplate(w, "raisers.html", nil)
 }
 
 // raiserGET shows the fundraiser.
-func raiserGET(c *gin.Context) {
-	raiserid := c.Param("raiserid")
+func raiserGET(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	raiserid := xmux.Param(ctx, "raiserid")
 	userid := fmt.Sprint(rand.Int31())
-	c.HTML(200, "raiser.html", gin.H{
-		"raiserid": raiserid,
-		"userid":   userid,
-	})
+
+	raisersTmpl.ExecuteTemplate(w, "raiser.html",
+		map[string]string{
+			"raiserid": raiserid,
+			"userid":   userid,
+		})
 }
 
 // raiserPUT modifies an existing fundraiser
-func raiserPUT(c *gin.Context) {
-	raiserid := c.Param("raiserid")
-	message := c.PostForm("message")
+func raiserPUT(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	raiserid := xmux.Param(ctx, "raiserid")
+	message := r.PostFormValue("message")
 	//raiser(raiserid).Submit(userid + ": " + message)
 
-	c.JSON(200, gin.H{
+	writeJSON(ctx, w, map[string]string{
 		"status":  "success",
 		"message": raiserid + ": " + message,
 	})
 }
 
 // raiserPOST creates a new fundraiser
-func raiserPOST(c *gin.Context) {
-	raiserid := c.Param("raiserid")
-	message := c.PostForm("message")
+func raiserPOST(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	raiserid := xmux.Param(ctx, "raiserid")
+	message := r.PostFormValue("message")
 	//raiser(raiserid).Submit(userid + ": " + message)
 
-	c.JSON(200, gin.H{
+	writeJSON(ctx, w, map[string]string{
 		"status":  "success",
 		"message": raiserid + ": " + message,
 	})
 }
 
 // raiserDELETE deletes the fundraiser
-func raiserDELETE(c *gin.Context) {
+func raiserDELETE(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	//raiserid := c.Param("raiserid")
 	//deleteBroadcast(raiserid)
 }

@@ -2,47 +2,60 @@
 
 package main
 
-import "github.com/gin-gonic/gin"
+import (
+	"html/template"
+	"net/http"
+
+	"github.com/rs/xmux"
+
+	"golang.org/x/net/context"
+)
+
+type User struct {
+	Name string
+}
+
+var usersTmpl *template.Template
 
 // usersGET lists the users
-func usersGET(c *gin.Context) {
-	c.HTML(200, "users.html", nil)
+func usersGET(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	usersTmpl.ExecuteTemplate(w, "users.html", nil)
 }
 
 // userGET returns the user
-func userGET(c *gin.Context) {
-	userid := c.Param("userid")
-	c.HTML(200, "user.html", gin.H{
+func userGET(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	userid := xmux.Param(ctx, "userid")
+	usersTmpl.ExecuteTemplate(w, "user.html", map[string]string{
 		"userid": userid,
 	})
 }
 
 // userPOST creates a new user
-func userPOST(c *gin.Context) {
-	userid := c.PostForm("user")
-	message := c.PostForm("message")
+func userPOST(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	userid := r.PostFormValue("user")
+	message := r.PostFormValue("message")
 	//user(userid).Submit(userid + ": " + message)
 
-	c.JSON(200, gin.H{
+	writeJSON(ctx, w, map[string]string{
 		"status":  "success",
 		"message": userid + ": " + message,
 	})
 }
 
 // userPUT modifies an existing user
-func userPUT(c *gin.Context) {
-	userid := c.PostForm("user")
-	message := c.PostForm("message")
+func userPUT(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	userid := r.PostFormValue("user")
+	message := r.PostFormValue("message")
 	//user(userid).Submit(userid + ": " + message)
 
-	c.JSON(200, gin.H{
+	writeJSON(ctx, w, map[string]string{
 		"status":  "success",
 		"message": userid + ": " + message,
 	})
 }
 
 // userDELETE deletes the user
-func userDELETE(c *gin.Context) {
+func userDELETE(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	//userid := c.Param("userid")
 	//deleteBroadcast(userid)
 }
