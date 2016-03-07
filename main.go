@@ -104,8 +104,8 @@ func main() {
 	ha := func(f func(context.Context, http.ResponseWriter, *http.Request)) xhandler.HandlerC {
 		return authProtectC(h(f))
 	}
-	mux.GET("/", h(rootGET))
-	mux.Handle("GET", "/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+
+	mux.Handle("GET", "/static/*filepath", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
 	abRouter := mkHandlerC(ab.NewRouter())
 	mux.GET("/auth", h(abRouter.ServeHTTPC))
@@ -129,6 +129,8 @@ func main() {
 	sub.GET("/:funderid", ha(funderGET))
 	sub.POST("/:funderid", ha(funderPOST))
 	sub.DELETE("/:funderid", ha(funderDELETE))
+
+	mux.GET("/", h(rootGET))
 
 	logger.Info("Start listening on :8080")
 	logger.Fatal(http.ListenAndServe(":8080", c.Handler(mux)))
