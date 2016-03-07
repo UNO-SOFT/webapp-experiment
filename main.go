@@ -5,10 +5,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"io"
+	"html/template"
 	"log"
 	"net/http"
 	"os"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/context"
@@ -18,6 +19,7 @@ import (
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/sessions"
 	"github.com/justinas/nosurf"
+	"github.com/rjeczalik/notify"
 	"github.com/rs/xhandler"
 	"github.com/rs/xlog"
 	"github.com/rs/xmux"
@@ -28,11 +30,11 @@ import (
 var (
 	ab       = authboss.New()
 	database = NewMemStorer()
+
+	rootTmpl = template.Must(template.ParseGlob("templates/*.html"))
 )
 
 func main() {
-	setupAuthboss()
-	// Set up a middleware handler for Gin, with a custom "permission denied" message.
 	logConf := xlog.Config{
 		Level:  xlog.LevelDebug,
 		Output: xlog.NewConsoleOutput(),
@@ -40,6 +42,26 @@ func main() {
 	logger := xlog.New(logConf)
 	log.SetFlags(0)
 	log.SetOutput(logger)
+
+	setupAuthboss()
+	// Set up a middleware handler for Gin, with a custom "permission denied" message.
+
+	fsEvents := make(chan notify.EventInfo, 1)
+	for _, path := range []string{"templates"} {
+		if err := notify.Watch(path, fsEvents,
+			notify.InCloseWrite, notify.InMovedTo, notify.InCreate, notify.InDelete,
+		); err != nil {
+			logger.Errorf("cannot watch %q: %v", path, err)
+		}
+	}
+	defer notify.Stop(fsEvents)
+	go func() {
+		event := <-fsEvents
+		logger.Warnf("RESTARTing, because %q changed (%s)", event.Path(), event.Event())
+		time.Sleep(2 * time.Second)
+		logger.Info(os.Args)
+		syscall.Exec(os.Args[0], os.Args[0:], os.Environ())
+	}()
 
 	mux := xmux.New()
 	c := xhandler.Chain{}
@@ -71,10 +93,11 @@ func main() {
 		return authProtectC(h(f))
 	}
 	mux.GET("/", h(rootGET))
+	mux.Handle("GET", "/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
-	abRouter := ab.NewRouter()
-	mux.Handle("GET", "/auth", abRouter)
-	mux.Handle("POST", "/auth", abRouter)
+	abRouter := mkHandlerC(ab.NewRouter())
+	mux.GET("/auth", h(abRouter.ServeHTTPC))
+	mux.POST("/auth", h(abRouter.ServeHTTPC))
 
 	admin := mux.NewGroup("/admin")
 	admin.GET("/users", ha(usersGET))
@@ -107,7 +130,9 @@ func rootGET(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	} else {
 		msg = fmt.Sprintf("%#v", uI)
 	}
-	io.WriteString(w, msg)
+	rootTmpl.Execute(w, struct {
+		Message string
+	}{Message: msg})
 }
 
 //go:generate go run gen_keys.go
@@ -190,5 +215,10 @@ func logRequestC(h xhandler.HandlerC) xhandler.HandlerC {
 		h.ServeHTTPC(ctx, w, r)
 		dur := time.Since(start)
 		logger.Debug(dur)
+	})
+}
+func mkHandlerC(h http.Handler) xhandler.HandlerC {
+	return xhandler.HandlerFuncC(func(_ context.Context, w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r)
 	})
 }
