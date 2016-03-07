@@ -43,12 +43,12 @@ func main() {
 	log.SetFlags(0)
 	log.SetOutput(logger)
 
-	setupAuthboss()
 	// Set up a middleware handler for Gin, with a custom "permission denied" message.
+	setupAuthboss()
 
 	fsEvents := make(chan notify.EventInfo, 1)
 	for _, path := range []string{"templates"} {
-		if err := notify.Watch(path, fsEvents,
+		if err := notify.Watch(path+"/...", fsEvents, //recursive
 			notify.InCloseWrite, notify.InMovedTo, notify.InCreate, notify.InDelete,
 		); err != nil {
 			logger.Errorf("cannot watch %q: %v", path, err)
@@ -56,11 +56,23 @@ func main() {
 	}
 	defer notify.Stop(fsEvents)
 	go func() {
-		event := <-fsEvents
-		logger.Warnf("RESTARTing, because %q changed (%s)", event.Path(), event.Event())
-		time.Sleep(2 * time.Second)
-		logger.Info(os.Args)
-		syscall.Exec(os.Args[0], os.Args[0:], os.Environ())
+		var timer *time.Timer
+		var timerC <-chan time.Time
+		for {
+			select {
+			case event := <-fsEvents:
+				if timerC == nil {
+					logger.Warnf("%q changed (%s)", event.Path(), event.Event())
+					timer = time.NewTimer(2 * time.Second)
+					timerC = timer.C
+					continue
+				}
+				timer.Reset(2 * time.Second)
+			case <-timerC:
+				logger.Warn("RESTARTING")
+				syscall.Exec(os.Args[0], os.Args[0:], os.Environ())
+			}
+		}
 	}()
 
 	mux := xmux.New()
