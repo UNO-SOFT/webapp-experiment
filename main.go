@@ -52,6 +52,7 @@ func main() {
 	c.UseC(xlog.RefererHandler("referer"))
 	c.UseC(xlog.RequestIDHandler("req_id", "Request-Id"))
 	c.UseC(logRequestC)
+	c.Use(ab.ExpireMiddleware)
 
 	h := func(f func(context.Context, http.ResponseWriter, *http.Request)) xhandler.HandlerC {
 		return xhandler.HandlerFuncC(
