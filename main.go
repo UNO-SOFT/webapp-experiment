@@ -33,45 +33,69 @@ var (
 func main() {
 	setupAuthboss()
 	// Set up a middleware handler for Gin, with a custom "permission denied" message.
+	logConf := xlog.Config{
+		Level:  xlog.LevelDebug,
+		Output: xlog.NewConsoleOutput(),
+	}
+	logger := xlog.New(logConf)
+	log.SetFlags(0)
+	log.SetOutput(logger)
+
 	mux := xmux.New()
 	c := xhandler.Chain{}
-	logConf := xlog.Config{}
 	c.UseC(xlog.NewHandler(logConf))
-	log.SetFlags(0)
-	log.SetOutput(xlog.New(logConf))
 	c.UseC(xhandler.CloseHandler)
 	c.UseC(xhandler.TimeoutHandler(10 * time.Second))
 	c.UseC(xlog.RemoteAddrHandler("ip"))
-	c.UseC(xlog.UserAgentHandler("user_agent"))
+	//c.UseC(xlog.UserAgentHandler("user_agent"))
 	c.UseC(xlog.URLHandler("url"))
 	c.UseC(xlog.RefererHandler("referer"))
 	c.UseC(xlog.RequestIDHandler("req_id", "Request-Id"))
+	c.UseC(logRequestC)
 
 	h := func(f func(context.Context, http.ResponseWriter, *http.Request)) xhandler.HandlerC {
-		return c.HandlerCF(xhandler.HandlerFuncC(f))
+		return xhandler.HandlerFuncC(
+			func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+				session, err := sessionStore.Get(r, sessionCookieName)
+				if err == nil {
+					if len(session.Values) > 0 {
+						xlog.FromContext(ctx).Debugf("found session %#v", session.Values)
+					}
+					ctx = context.WithValue(ctx, "session", session)
+				}
+				f(ctx, w, r)
+			})
+	}
+	ha := func(f func(context.Context, http.ResponseWriter, *http.Request)) xhandler.HandlerC {
+		return authProtectC(h(f))
 	}
 	mux.GET("/", h(rootGET))
 
+	abRouter := ab.NewRouter()
+	mux.Handle("GET", "/auth", abRouter)
+	mux.Handle("POST", "/auth", abRouter)
+
 	admin := mux.NewGroup("/admin")
-	admin.GET("/users", h(usersGET))
+	admin.GET("/users", ha(usersGET))
 	sub := admin.NewGroup("/user")
-	sub.GET("/:userid", h(userGET))
-	sub.POST("/:userid", h(userPOST))
-	sub.DELETE("/:userid", h(userDELETE))
+	sub.GET("/:userid", ha(userGET))
+	sub.POST("/:userid", ha(userPOST))
+	sub.DELETE("/:userid", ha(userDELETE))
 
-	admin.GET("/raisers", h(raisersGET))
+	admin.GET("/raisers", ha(raisersGET))
 	sub = admin.NewGroup("/raiser")
-	sub.GET("/:raiserid", h(raiserGET))
-	sub.POST("/:raiserid", h(raiserPOST))
-	sub.DELETE("/:raiserid", h(raiserDELETE))
+	sub.GET("/:raiserid", ha(raiserGET))
+	sub.POST("/:raiserid", ha(raiserPOST))
+	sub.DELETE("/:raiserid", ha(raiserDELETE))
 
-	admin.GET("/funders", h(fundersGET))
+	admin.GET("/funders", ha(fundersGET))
 	sub = admin.NewGroup("/funder")
-	sub.GET("/:funderid", h(funderGET))
-	sub.POST("/:funderid", h(funderPOST))
-	sub.DELETE("/:funderid", h(funderDELETE))
+	sub.GET("/:funderid", ha(funderGET))
+	sub.POST("/:funderid", ha(funderPOST))
+	sub.DELETE("/:funderid", ha(funderDELETE))
 
-	log.Fatal(http.ListenAndServe(":8080", c.Handler(mux)))
+	logger.Info("Start listening on :8080")
+	logger.Fatal(http.ListenAndServe(":8080", c.Handler(mux)))
 }
 
 func rootGET(ctx context.Context, w http.ResponseWriter, r *http.Request) {
@@ -131,8 +155,39 @@ func setupAuthboss() {
 	}
 }
 
+type authProtector struct {
+	f xhandler.HandlerC
+}
+
+func authProtectC(f xhandler.HandlerC) xhandler.HandlerC {
+	return authProtector{f}
+}
+
+func (ap authProtector) ServeHTTPC(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	if u, err := ab.CurrentUser(w, r); err != nil {
+		log.Println("Error fetching current user:", err)
+		w.WriteHeader(http.StatusInternalServerError)
+	} else if u == nil {
+		xlog.FromContext(ctx).Info("Redirecting unauthorized user from ", r.URL.Path)
+		http.Redirect(w, r, "/", http.StatusFound)
+	} else {
+		ap.f.ServeHTTPC(context.WithValue(ctx, "user", u), w, r)
+	}
+}
+
 func writeJSON(ctx context.Context, w http.ResponseWriter, data interface{}) {
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		xlog.FromContext(ctx).Error(err)
 	}
+}
+
+func logRequestC(h xhandler.HandlerC) xhandler.HandlerC {
+	return xhandler.HandlerFuncC(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+		logger := xlog.FromContext(ctx)
+		logger.Info(r.Method)
+		start := time.Now()
+		h.ServeHTTPC(ctx, w, r)
+		dur := time.Since(start)
+		logger.Debug(dur)
+	})
 }

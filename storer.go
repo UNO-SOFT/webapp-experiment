@@ -204,7 +204,7 @@ func (s CookieStorer) Del(key string) {
 	http.SetCookie(s.w, cookie)
 }
 
-const sessionCookieName = "ab_blog"
+const sessionCookieName = "ab_unosoft"
 
 var sessionStore *sessions.CookieStore
 
