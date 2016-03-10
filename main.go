@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -16,9 +18,11 @@ import (
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 
+	"github.com/UNO-SOFT/webapp-experiment/tpl"
 	"github.com/gorilla/securecookie"
 	"github.com/gorilla/sessions"
 	"github.com/justinas/nosurf"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rjeczalik/notify"
 	"github.com/rs/xhandler"
 	"github.com/rs/xlog"
@@ -31,7 +35,13 @@ var (
 	ab       = authboss.New()
 	database = NewMemStorer()
 
-	rootTmpl = template.Must(template.ParseGlob("templates/*.html"))
+	funcs = template.FuncMap{
+		"formatDate": func(date time.Time) string {
+			return date.Format("2006/01/02 03:04pm")
+		},
+		"yield": func() string { return "" },
+	}
+	templates = tpl.Must(tpl.Load("views", "views/partials", "layout.html.tpl", funcs))
 )
 
 func main() {
@@ -87,6 +97,7 @@ func main() {
 	c.UseC(xlog.RequestIDHandler("req_id", "Request-Id"))
 	c.UseC(logRequestC)
 	c.Use(ab.ExpireMiddleware)
+	c.Use(func(h http.Handler) http.Handler { return prometheus.InstrumentHandler("funder", h) })
 
 	h := func(f func(context.Context, http.ResponseWriter, *http.Request)) xhandler.HandlerC {
 		return xhandler.HandlerFuncC(
@@ -108,8 +119,8 @@ func main() {
 	mux.Handle("GET", "/assets/*filepath", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets"))))
 
 	abRouter := mkHandlerC(ab.NewRouter())
-	mux.GET("/auth", h(abRouter.ServeHTTPC))
-	mux.POST("/auth", h(abRouter.ServeHTTPC))
+	mux.GET("/auth/*path", abRouter)
+	mux.POST("/auth/*path", abRouter)
 
 	admin := mux.NewGroup("/admin")
 	admin.GET("/users", ha(usersGET))
@@ -130,6 +141,7 @@ func main() {
 	sub.POST("/:funderid", ha(funderPOST))
 	sub.DELETE("/:funderid", ha(funderDELETE))
 
+	mux.Handle("GET", "/metrics", prometheus.Handler())
 	mux.GET("/", h(rootGET))
 
 	logger.Info("Start listening on :8080")
@@ -138,16 +150,22 @@ func main() {
 
 func rootGET(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 	var msg string
+	var u User
+	var ok bool
 	uI, err := ab.CurrentUser(w, r)
 	if err != nil {
 		msg = fmt.Sprintf("CurrentUser: %v", err)
-	} else {
+	} else if u, ok = uI.(User); ok {
 		msg = fmt.Sprintf("%#v", uI)
 	}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	rootTmpl.Execute(w, struct {
-		Message string
-	}{Message: msg})
+	if err := templates.Render(w, "index",
+		map[string]interface{}{
+			"Message":           msg,
+			"loggedin":          uI != nil,
+			"current_user_name": u.Name,
+		}); err != nil {
+		xlog.FromContext(ctx).Errorf("Render index: %v", err)
+	}
 }
 
 //go:generate go run gen_keys.go
@@ -161,6 +179,8 @@ func setupAuthboss() {
 	ab.SessionStoreMaker = NewSessionStorer
 	ab.OAuth2Storer = database
 	ab.MountPath = "/auth"
+	ab.ViewsPath = "ab_views"
+	ab.LayoutDataMaker = layoutData
 	ab.OAuth2Providers = map[string]authboss.OAuth2Provider{
 		"google": authboss.OAuth2Provider{
 			OAuth2Config: &oauth2.Config{
@@ -190,9 +210,30 @@ func setupAuthboss() {
 			AllowWhitespace: true,
 		},
 	}
+	b, err := ioutil.ReadFile(filepath.Join("views", "layout.html.tpl"))
+	if err != nil {
+		panic(err)
+	}
+	ab.Layout = template.Must(template.New("layout").Funcs(funcs).Parse(string(b)))
 
 	if err := ab.Init(); err != nil {
 		log.Fatal(err)
+	}
+}
+
+func layoutData(w http.ResponseWriter, r *http.Request) authboss.HTMLData {
+	currentUserName := ""
+	userInter, err := ab.CurrentUser(w, r)
+	if userInter != nil && err == nil {
+		currentUserName = userInter.(*User).Name
+	}
+
+	return authboss.HTMLData{
+		"loggedin":               userInter != nil,
+		"username":               "",
+		authboss.FlashSuccessKey: ab.FlashSuccess(w, r),
+		authboss.FlashErrorKey:   ab.FlashError(w, r),
+		"current_user_name":      currentUserName,
 	}
 }
 
@@ -233,7 +274,7 @@ func logRequestC(h xhandler.HandlerC) xhandler.HandlerC {
 	})
 }
 func mkHandlerC(h http.Handler) xhandler.HandlerC {
-	return xhandler.HandlerFuncC(func(_ context.Context, w http.ResponseWriter, r *http.Request) {
+	return xhandler.HandlerFuncC(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 		h.ServeHTTP(w, r)
 	})
 }
