@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -15,8 +16,16 @@ import (
 	"time"
 
 	"golang.org/x/net/context"
+
 	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
+	"gopkg.in/authboss.v0"
+	_ "gopkg.in/authboss.v0/auth"
+	_ "gopkg.in/authboss.v0/confirm"
+	_ "gopkg.in/authboss.v0/lock"
+	aboauth "gopkg.in/authboss.v0/oauth2"
+	_ "gopkg.in/authboss.v0/recover"
+	_ "gopkg.in/authboss.v0/register"
 
 	"github.com/UNO-SOFT/webapp-experiment/tpl"
 	"github.com/gorilla/securecookie"
@@ -27,8 +36,6 @@ import (
 	"github.com/rs/xhandler"
 	"github.com/rs/xlog"
 	"github.com/rs/xmux"
-	"gopkg.in/authboss.v0"
-	aboauth "gopkg.in/authboss.v0/oauth2"
 )
 
 var (
@@ -54,7 +61,7 @@ func main() {
 	log.SetOutput(logger)
 
 	// Set up a middleware handler for Gin, with a custom "permission denied" message.
-	setupAuthboss()
+	setupAuthboss(logger)
 
 	fsEvents := make(chan notify.EventInfo, 1)
 	for _, path := range []string{"templates"} {
@@ -118,7 +125,7 @@ func main() {
 
 	mux.Handle("GET", "/assets/*filepath", http.StripPrefix("/assets/", http.FileServer(http.Dir("assets"))))
 
-	abRouter := mkHandlerC(ab.NewRouter())
+	abRouter := h(mkHandlerC(ab.NewRouter()).ServeHTTPC)
 	mux.GET("/auth/*path", abRouter)
 	mux.POST("/auth/*path", abRouter)
 
@@ -169,7 +176,7 @@ func rootGET(ctx context.Context, w http.ResponseWriter, r *http.Request) {
 }
 
 //go:generate go run gen_keys.go
-func setupAuthboss() {
+func setupAuthboss(logWriter io.Writer) {
 	cookieStore = securecookie.New(cookieStoreKey, nil)
 	sessionStore = sessions.NewCookieStore(sessionStoreKey)
 
@@ -196,6 +203,9 @@ func setupAuthboss() {
 	ab.XSRFMaker = func(_ http.ResponseWriter, r *http.Request) string {
 		return nosurf.Token(r)
 	}
+	ab.Mailer = authboss.LogMailer(os.Stdout) // authboss.SMTPMailer("127.0.0.1:25")
+	//ab.ErrorHandler
+	ab.LogWriter = logWriter
 	ab.Policies = []authboss.Validator{
 		authboss.Rules{
 			FieldName:       "email",
@@ -217,7 +227,7 @@ func setupAuthboss() {
 	ab.Layout = template.Must(template.New("layout").Funcs(funcs).Parse(string(b)))
 
 	if err := ab.Init(); err != nil {
-		log.Fatal(err)
+		xlog.Fatal(err)
 	}
 }
 
@@ -268,13 +278,34 @@ func logRequestC(h xhandler.HandlerC) xhandler.HandlerC {
 		logger := xlog.FromContext(ctx)
 		logger.Info(r.Method)
 		start := time.Now()
-		h.ServeHTTPC(ctx, w, r)
+		lw := &logResponseWriter{ResponseWriter: w}
+		h.ServeHTTPC(ctx, lw, r)
 		dur := time.Since(start)
+		logger.SetField("status_code", lw.StatusCode)
 		logger.Debug(dur)
 	})
 }
 func mkHandlerC(h http.Handler) xhandler.HandlerC {
 	return xhandler.HandlerFuncC(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+		xlog.FromContext(ctx).Debug("mkHandlerC(%v)", h)
 		h.ServeHTTP(w, r)
 	})
+}
+
+func StatusCodeHandler(h xhandler.HandlerC) xhandler.HandlerC {
+	return xhandler.HandlerFuncC(func(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+		lw := &logResponseWriter{ResponseWriter: w}
+		h.ServeHTTPC(ctx, lw, r)
+		xlog.FromContext(ctx).SetField("status_code", lw.StatusCode)
+	})
+}
+
+type logResponseWriter struct {
+	http.ResponseWriter
+	StatusCode int
+}
+
+func (lw *logResponseWriter) WriteHeader(status int) {
+	lw.StatusCode = status
+	lw.ResponseWriter.WriteHeader(status)
 }
