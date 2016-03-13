@@ -191,8 +191,8 @@ func setupAuthboss(logWriter io.Writer) {
 	ab.OAuth2Providers = map[string]authboss.OAuth2Provider{
 		"google": authboss.OAuth2Provider{
 			OAuth2Config: &oauth2.Config{
-				ClientID:     ``,
-				ClientSecret: ``,
+				ClientID:     `358330097293-dniffjrngm0v2g7jb3u73dacscnq8vdj.apps.googleusercontent.com`,
+				ClientSecret: os.Getenv("GOOGLE_CLIENT_SECRET"),
 				Scopes:       []string{`profile`, `email`},
 				Endpoint:     google.Endpoint,
 			},

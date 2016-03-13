@@ -23,6 +23,7 @@
 				<ul class="nav navbar-nav navbar-right">
 					{{if not .loggedin}}
 					<li><a href="/auth/register">Register</a></li>
+					<li><a href="/auth/oauth2/google"><i class="fa fa-sign-in"></i> Login with Google</a></li>
 					<li><a href="/auth/login"><i class="fa fa-sign-in"></i> Login</a></li>
 					{{else}}
 					<li class="dropdown">
