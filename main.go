@@ -64,7 +64,7 @@ func main() {
 	setupAuthboss(logger)
 
 	fsEvents := make(chan notify.EventInfo, 1)
-	for _, path := range []string{"templates"} {
+	for _, path := range []string{"templates", "views"} {
 		if err := notify.Watch(path+"/...", fsEvents, //recursive
 			notify.InCloseWrite, notify.InMovedTo, notify.InCreate, notify.InDelete,
 		); err != nil {
